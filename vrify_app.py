@@ -1,14 +1,14 @@
-import sys
-
-# 🔍 Debug: show which Python interpreter is running
-print("👉 Streamlit is running with Python:", sys.executable)
-
 import os
+import sys
 import tempfile
+import subprocess
 import streamlit as st
 import cv2
 import numpy as np
-from moviepy.editor import VideoFileClip
+
+
+# 🔍 Debug info
+print("👉 Streamlit is running with Python:", sys.executable)
 
 
 # ============= Core VR conversion =============
@@ -41,43 +41,67 @@ def warp_horizontal_curve(img: np.ndarray, curve: float) -> np.ndarray:
 def convert_to_vr(input_path: str, output_path: str,
                   layout: str = "sbs", curve: float = 0.0,
                   width: int = 1920, height: int = 1080) -> None:
-    """Convert video into VR style (SBS or OU)."""
-    clip = VideoFileClip(input_path)
-    fps = clip.fps or 25
+    """Convert video into VR style (SBS or OU) using OpenCV."""
+
+    cap = cv2.VideoCapture(input_path)
+    if not cap.isOpened():
+        raise RuntimeError("Could not open input video.")
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
 
     if layout == "sbs":
         pane_w, pane_h = width // 2, height
     else:  # over-under
         pane_w, pane_h = width, height // 2
 
-    def process_frame(t: float) -> np.ndarray:
-        frame = clip.get_frame(t)
+    temp_video_path = output_path.replace(".mp4", "_noaudio.mp4")
+    out = cv2.VideoWriter(temp_video_path, fourcc, fps, (width, height))
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
         frame = cv2.resize(frame, (pane_w, pane_h), interpolation=cv2.INTER_AREA)
+
         if curve > 0:
             frame = warp_horizontal_curve(frame, curve)
 
         if layout == "sbs":
-            return np.hstack([frame, frame])
+            vr_frame = np.hstack([frame, frame])
         else:
-            return np.vstack([frame, frame])
+            vr_frame = np.vstack([frame, frame])
 
-    out_clip = clip.fl(process_frame, apply_to=["mask"]).set_duration(clip.duration).set_fps(fps)
+        out.write(vr_frame)
 
-    if clip.audio:
-        out_clip = out_clip.set_audio(clip.audio)
+    cap.release()
+    out.release()
 
-    out_clip.write_videofile(
-        output_path,
-        codec="libx264",
-        audio_codec="aac",
-        fps=fps
-    )
+    # 🔊 Merge audio with FFmpeg
+    try:
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i", temp_video_path,
+            "-i", input_path,
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-map", "0:v:0",
+            "-map", "1:a:0?",
+            output_path
+        ]
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        os.remove(temp_video_path)  # clean up
+    except Exception as e:
+        print("⚠️ Audio merge failed:", e)
+        os.rename(temp_video_path, output_path)  # fallback: video only
 
 
 # ============= Streamlit UI =============
 
-st.set_page_config(page_title="VRify App", page_icon="🎥", layout="centered")
-st.title("🎥 VRify – Convert a video to VR (SBS / Over-Under)")
+st.set_page_config(page_title="VRify App (OpenCV + Audio)", page_icon="🎥", layout="centered")
+st.title("🎥 VRify – Convert a video to VR (SBS / Over-Under) [OpenCV + FFmpeg Audio]")
 
 uploaded_file = st.file_uploader("Upload a video", type=["mp4", "mov", "avi", "mkv"])
 
@@ -96,7 +120,7 @@ if uploaded_file is not None:
     st.write("⚙️ Processing... please wait")
     try:
         convert_to_vr(input_path, output_path, layout=layout, curve=curve, width=width, height=height)
-        st.success("✅ Conversion complete!")
+        st.success("✅ Conversion complete with audio!")
         with open(output_path, "rb") as f:
             st.download_button("⬇️ Download VR Video", f, file_name="vrified_video.mp4", mime="video/mp4")
     except Exception as e:
