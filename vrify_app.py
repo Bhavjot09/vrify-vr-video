@@ -81,7 +81,7 @@ def convert_to_vr(input_path: str, output_path: str,
     # 🔊 Merge audio with FFmpeg
     try:
         cmd = [
-            "ffmpeg",
+            r"C:\ffmpeg\bin\ffmpeg.exe",
             "-y",
             "-i", temp_video_path,
             "-i", input_path,
