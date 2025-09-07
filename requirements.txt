@@ -1,4 +1,4 @@
 streamlit
-opencv-python
+opencv-python-headless
 numpy
-ffmpeg-python   # optional, but we’re using subprocess so ffmpeg must be installed on system
+ffmpeg-python
